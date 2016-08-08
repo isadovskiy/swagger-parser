@@ -77,7 +77,7 @@
     "call-me-maybe": "^1.0.1",
     "debug": "^2.2.0",
     "es6-promise": "^3.0.2",
-    "json-schema-ref-parser": "^1.4.1",
+    "json-schema-ref-parser": "^3.1.2",
     "ono": "^2.0.1",
     "swagger-methods": "^1.0.0",
     "swagger-schema-official": "2.0.0-bab6bed",
