@@ -25,7 +25,7 @@ if (typeof Object.create === 'function') {
 
 },{}],2:[function(require,module,exports){
 /**!
- * Ono v2.0.1
+ * Ono v2.2.1
  *
  * @link https://github.com/BigstickCarpet/ono
  * @license MIT
@@ -64,7 +64,7 @@ function create(Klass) {
    * @returns {Error}
    */
   return function ono(err, props, message, params) {
-    var formattedMessage, stack;
+    var formattedMessage;
     var formatter = module.exports.formatter;
 
     if (typeof(err) === 'string') {
@@ -109,11 +109,7 @@ function create(Klass) {
  */
 function extendError(targetError, sourceError) {
   if (sourceError) {
-    var stack = sourceError.stack;
-    if (stack) {
-      targetError.stack += ' \n\n' + sourceError.stack;
-    }
-
+    extendStack(targetError, sourceError);
     extend(targetError, sourceError, true);
   }
 }
@@ -127,7 +123,7 @@ function extendToJSON(error) {
   error.toJSON = errorToJSON;
 
   // Also add an inspect() method, for compatibility with Node.js' `util.inspect()` method
-  error.inspect = errorToJSON;
+  error.inspect = errorToString;
 }
 
 /**
@@ -177,7 +173,8 @@ function errorToJSON() {
   for (var i = 0; i < keys.length; i++) {
     var key = keys[i];
     var value = this[key];
-    if (value !== undefined) {
+    var type = typeof value;
+    if (type !== 'undefined' && type !== 'function') {
       json[key] = value;
     }
   }
@@ -185,16 +182,157 @@ function errorToJSON() {
   return json;
 }
 
+/**
+ * Serializes Error objects as human-readable JSON strings for debugging/logging purposes.
+ *
+ * @returns {string}
+ */
+function errorToString() {
+  // jshint -W040
+  return JSON.stringify(this, null, 2).replace(/\\n/g, '\n');
+}
+
+/**
+ * Extend the error stack to include its cause
+ */
+function extendStack(targetError, sourceError) {
+  if (hasLazyStack(sourceError)) {
+    extendStackProperty(targetError, sourceError);
+  }
+  else {
+    var stack = sourceError.stack;
+    if (stack) {
+      targetError.stack += ' \n\n' + sourceError.stack;
+    }
+  }
+}
+
+/**
+ * Does a one-time determination of whether this JavaScript engine
+ * supports lazy `Error.stack` properties.
+ */
+var supportsLazyStack = (function() {
+  return !!(
+    // ES5 property descriptors must be supported
+    Object.getOwnPropertyDescriptor && Object.defineProperty &&
+
+    // Chrome on Android doesn't support lazy stacks :(
+    (typeof navigator === 'undefined' || !/Android/.test(navigator.userAgent))
+  );
+})();
+
+/**
+ * Does this error have a lazy stack property?
+ *
+ * @returns {boolean}
+ */
+function hasLazyStack(err) {
+  if (!supportsLazyStack) {
+    return false;
+  }
+  var descriptor = Object.getOwnPropertyDescriptor(err, 'stack');
+  if (!descriptor) {
+    return false;
+  }
+  return typeof descriptor.get === 'function';
+}
+
+/**
+ * Extend the error stack to include its cause, lazily
+ */
+function extendStackProperty(targetError, sourceError) {
+  var sourceStack = Object.getOwnPropertyDescriptor(sourceError, 'stack');
+  if (sourceStack) {
+    var targetStack = Object.getOwnPropertyDescriptor(targetError, 'stack');
+    Object.defineProperty(targetError, 'stack', {
+      get: function() {
+        return targetStack.get.apply(targetError) + ' \n\n' + sourceError.stack;
+      },
+      enumerable: false,
+      configurable: true
+    });
+  }
+}
+
 },{"util":8}],3:[function(require,module,exports){
 // shim for using process in browser
-
 var process = module.exports = {};
+
+// cached from whatever global is present so that test runners that stub it
+// don't break things.  But we need to wrap it in a try catch in case it is
+// wrapped in strict mode code which doesn't define any globals.  It's inside a
+// function because try/catches deoptimize in certain engines.
+
+var cachedSetTimeout;
+var cachedClearTimeout;
+
+(function () {
+    try {
+        cachedSetTimeout = setTimeout;
+    } catch (e) {
+        cachedSetTimeout = function () {
+            throw new Error('setTimeout is not defined');
+        }
+    }
+    try {
+        cachedClearTimeout = clearTimeout;
+    } catch (e) {
+        cachedClearTimeout = function () {
+            throw new Error('clearTimeout is not defined');
+        }
+    }
+} ())
+function runTimeout(fun) {
+    if (cachedSetTimeout === setTimeout) {
+        //normal enviroments in sane situations
+        return setTimeout(fun, 0);
+    }
+    try {
+        // when when somebody has screwed with setTimeout but no I.E. maddness
+        return cachedSetTimeout(fun, 0);
+    } catch(e){
+        try {
+            // When we are in I.E. but the script has been evaled so I.E. doesn't trust the global object when called normally
+            return cachedSetTimeout.call(null, fun, 0);
+        } catch(e){
+            // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error
+            return cachedSetTimeout.call(this, fun, 0);
+        }
+    }
+
+
+}
+function runClearTimeout(marker) {
+    if (cachedClearTimeout === clearTimeout) {
+        //normal enviroments in sane situations
+        return clearTimeout(marker);
+    }
+    try {
+        // when when somebody has screwed with setTimeout but no I.E. maddness
+        return cachedClearTimeout(marker);
+    } catch (e){
+        try {
+            // When we are in I.E. but the script has been evaled so I.E. doesn't  trust the global object when called normally
+            return cachedClearTimeout.call(null, marker);
+        } catch (e){
+            // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error.
+            // Some versions of I.E. have different rules for clearTimeout vs setTimeout
+            return cachedClearTimeout.call(this, marker);
+        }
+    }
+
+
+
+}
 var queue = [];
 var draining = false;
 var currentQueue;
 var queueIndex = -1;
 
 function cleanUpNextTick() {
+    if (!draining || !currentQueue) {
+        return;
+    }
     draining = false;
     if (currentQueue.length) {
         queue = currentQueue.concat(queue);
@@ -210,7 +348,7 @@ function drainQueue() {
     if (draining) {
         return;
     }
-    var timeout = setTimeout(cleanUpNextTick);
+    var timeout = runTimeout(cleanUpNextTick);
     draining = true;
 
     var len = queue.length;
@@ -227,7 +365,7 @@ function drainQueue() {
     }
     currentQueue = null;
     draining = false;
-    clearTimeout(timeout);
+    runClearTimeout(timeout);
 }
 
 process.nextTick = function (fun) {
@@ -239,7 +377,7 @@ process.nextTick = function (fun) {
     }
     queue.push(new Item(fun, args));
     if (queue.length === 1 && !draining) {
-        setTimeout(drainQueue, 0);
+        runTimeout(drainQueue);
     }
 };
 
